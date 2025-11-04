@@ -1,0 +1,137 @@
+CREATE DATABASE rec;
+USE rec;
+
+-- USERS
+CREATE TABLE users (
+  user_id INT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(50) UNIQUE,
+  password VARCHAR(100),
+  role ENUM('admin','user') DEFAULT 'user'
+);
+
+INSERT INTO users (username, password, role)
+VALUES ('admin', 'admin', 'admin');
+
+-- MOVIES
+CREATE TABLE movie (
+  movie_id INT AUTO_INCREMENT PRIMARY KEY,
+  movie_name VARCHAR(100),
+  price INT
+);
+
+INSERT INTO movie (movie_name, price) VALUES
+('Oppenheimer', 280),
+('Avengers: Endgame', 300),
+('Harry Potter', 200),
+('Fast & Furious', 250),
+('Mission Impossible', 240);
+
+-- SHOWS
+CREATE TABLE shows (
+  show_id INT AUTO_INCREMENT PRIMARY KEY,
+  movie_id INT,
+  show_name VARCHAR(50),
+  show_time VARCHAR(50),
+  total_seats INT DEFAULT 20,
+  available_seats INT DEFAULT 20,
+  FOREIGN KEY (movie_id) REFERENCES movie(movie_id) ON DELETE CASCADE
+);
+
+INSERT INTO shows (movie_id, show_name, show_time)
+SELECT movie_id, 'Evening Show', '6:00 PM - 9:00 PM' FROM movie;
+
+-- SEATS
+CREATE TABLE seats (
+  seat_id INT AUTO_INCREMENT PRIMARY KEY,
+  show_id INT,
+  seat_no VARCHAR(10),
+  is_booked BOOLEAN DEFAULT FALSE,
+  user_id INT NULL,
+  FOREIGN KEY (show_id) REFERENCES shows(show_id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL,
+  UNIQUE (show_id, seat_no)
+);
+
+-- RESERVATIONS
+CREATE TABLE reservations (
+  booking_id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT,
+  show_id INT,
+  seat_no VARCHAR(10),
+  booking_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+  price INT,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL,
+  FOREIGN KEY (show_id) REFERENCES shows(show_id) ON DELETE CASCADE
+);
+
+-- ✅ STORED PROCEDURE (safe for all MySQL versions)
+DELIMITER //
+CREATE PROCEDURE create_seats_for_all()
+BEGIN
+  DECLARE done INT DEFAULT 0;
+  DECLARE sid INT;
+  DECLARE cur CURSOR FOR SELECT show_id FROM shows;
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+  OPEN cur;
+  seat_loop: LOOP
+    FETCH cur INTO sid;
+    IF done THEN
+      LEAVE seat_loop;
+    END IF;
+
+    -- Generate seats A1–D5 (20 total)
+    SET @row = 0;
+    WHILE @row < 20 DO
+      SET @row = @row + 1;
+      SET @letter = CHAR(64 + CEIL(@row / 5));
+      SET @num = (@row - 1) % 5 + 1;
+      SET @seat = CONCAT(@letter, @num);
+      INSERT IGNORE INTO seats (show_id, seat_no, is_booked) VALUES (sid, @seat, 0);
+    END WHILE;
+  END LOOP;
+  CLOSE cur;
+END //
+DELIMITER ;
+
+-- Run it
+CALL create_seats_for_all();
+
+
+-- Recreate seats safely for all shows (if missing)
+DELIMITER //
+CREATE PROCEDURE ensure_all_seats_exist()
+BEGIN
+  DECLARE sid INT;
+  DECLARE done INT DEFAULT 0;
+  DECLARE cur CURSOR FOR SELECT show_id FROM shows;
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+  OPEN cur;
+  seat_loop: LOOP
+    FETCH cur INTO sid;
+    IF done THEN
+      LEAVE seat_loop;
+    END IF;
+
+    SET @cnt = (SELECT COUNT(*) FROM seats WHERE show_id = sid);
+    IF @cnt = 0 THEN
+      SET @row = 0;
+      WHILE @row < 20 DO
+        SET @row = @row + 1;
+        SET @letter = CHAR(64 + CEIL(@row / 5));
+        SET @num = (@row - 1) % 5 + 1;
+        SET @seat = CONCAT(@letter, @num);
+        INSERT INTO seats (show_id, seat_no, is_booked) VALUES (sid, @seat, 0);
+      END WHILE;
+    END IF;
+  END LOOP;
+  CLOSE cur;
+END //
+DELIMITER ;
+
+-- Run once:
+CALL ensure_all_seats_exist();
+
+-- Verify
+SELECT show_id, COUNT(*) AS seats_per_show FROM seats GROUP BY show_id;
